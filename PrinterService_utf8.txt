@@ -1,0 +1,200 @@
+﻿package com.example.macaumemebershipprintingservice.printer
+
+import android.app.Notification
+import android.app.NotificationChannel
+import android.app.NotificationManager
+import android.app.PendingIntent
+import android.app.Service
+import android.content.Context
+import android.content.Intent
+import android.os.Build
+import android.os.IBinder
+import android.util.Log
+import androidx.core.app.NotificationCompat
+import com.example.macaumemebershipprintingservice.MainActivity
+import com.example.macaumemebershipprintingservice.R
+import kotlinx.coroutines.*
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
+import java.text.SimpleDateFormat
+import java.util.Date
+import kotlinx.coroutines.flow.update
+import kotlinx.coroutines.flow.update`nimport java.util.Locale
+
+class PrinterService : Service() {
+
+    private val serviceScope = CoroutineScope(Dispatchers.IO + SupervisorJob())
+
+    override fun onCreate() {
+        super.onCreate()
+        instance = this
+        addLog("????撌脣遣蝡?(Service Created)")
+        startForegroundServiceWithNotification()
+
+        // Initialize Printer Manager
+        _printerManager = SunmiPrinterManager(applicationContext)
+        _printerManager?.let { pm ->
+            serviceScope.launch {
+                pm.printerStatus.collect { status ->
+                    _printerStatus.value = status
+                    updateStateLogAndNotification()
+                }
+            }
+            serviceScope.launch {
+                pm.printerInfo.collect { info ->
+                    _printerInfo.value = info
+                }
+            }
+        }
+
+        // Setup the local HTTP Server
+        setupHttpServer()
+        
+        // Auto-start HTTP Server if enabled in preferences
+        val prefs = getSharedPreferences("printer_app_prefs", Context.MODE_PRIVATE)
+        val serverEnabled = prefs.getBoolean("server_enabled", true)
+        if (serverEnabled) {
+            startLocalServer()
+        }
+    }
+
+    private fun startForegroundServiceWithNotification() {
+        val channelId = "printer_service_channel"
+        val channelName = "瞉喲????????????"
+        val notificationManager = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            val channel = NotificationChannel(
+                channelId,
+                channelName,
+                NotificationManager.IMPORTANCE_LOW
+            ).apply {
+                description = "靽?蝬脤??垢?潮??砍?望???亙??函????
+            }
+            notificationManager.createNotificationChannel(channel)
+        }
+
+        val notificationIntent = Intent(this, MainActivity::class.java)
+        val pendingIntent = PendingIntent.getActivity(
+            this,
+            0,
+            notificationIntent,
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+                PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
+            } else {
+                PendingIntent.FLAG_UPDATE_CURRENT
+            }
+        )
+
+        // Stop Service Action for user convenience
+        val stopIntent = Intent(this, PrinterService::class.java).apply {
+            action = ACTION_STOP_SERVICE
+        }
+        val stopPendingIntent = PendingIntent.getService(
+            this,
+            1,
+            stopIntent,
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+                PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
+            } else {
+                PendingIntent.FLAG_UPDATE_CURRENT
+            }
+        )
+
+        val notification = NotificationCompat.Builder(this, channelId)
+            .setContentTitle("瞉喲???摮蟡函?蝡?)
+            .setContentText("?望??璈?賭葉...")
+            .setSmallIcon(android.R.drawable.ic_menu_info_details)
+            .setContentIntent(pendingIntent)
+            .setOngoing(true)
+            .addAction(
+                android.R.drawable.ic_menu_close_clear_cancel,
+                "?????",
+                stopPendingIntent
+            )
+            .build()
+
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            startForeground(
+                NOTIFICATION_ID,
+                notification,
+                android.content.pm.ServiceInfo.FOREGROUND_SERVICE_TYPE_CONNECTED_DEVICE
+            )
+        } else {
+            startForeground(NOTIFICATION_ID, notification)
+        }
+    }
+
+    fun updateStateLogAndNotification() {
+        val status = _printerStatus.value
+        val serverText = _serverStatusText.value
+        val statusLabel = if (status == "Connected") "撌脤??拍??璈? else "?璈?? ($status)"
+        val serverLabel = if (serverText.startsWith("Running")) "?砍蝬脤?撌脣??? else "?砍蝬脤?撌脤???
+
+        val channelId = "printer_service_channel"
+        val notificationIntent = Intent(this, MainActivity::class.java)
+        val pendingIntent = PendingIntent.getActivity(
+            this,
+            0,
+            notificationIntent,
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+                PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
+            } else {
+                PendingIntent.FLAG_UPDATE_CURRENT
+            }
+        )
+
+        val stopIntent = Intent(this, PrinterService::class.java).apply {
+            action = ACTION_STOP_SERVICE
+        }
+        val stopPendingIntent = PendingIntent.getService(
+            this,
+            1,
+            stopIntent,
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+                PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
+            } else {
+                PendingIntent.FLAG_UPDATE_CURRENT
+            }
+        )
+
+        val notification = NotificationCompat.Builder(this, channelId)
+            .setContentTitle("瞉喲??????????銝?)
+            .setContentText("$statusLabel | $serverLabel")
+            .setSmallIcon(android.R.drawable.ic_menu_info_details)
+            .setContentIntent(pendingIntent)
+            .setOngoing(true)
+            .addAction(
+                android.R.drawable.ic_menu_close_clear_cancel,
+                "?????",
+                stopPendingIntent
+            )
+            .build()
+
+        val notificationManager = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+        notificationManager.notify(NOTIFICATION_ID, notification)
+    }
+
+    override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        if (intent != null) {
+            val action = intent.action
+            if (action == ACTION_STOP_SERVICE) {
+                addLog("?嗅??隢?嚗??舀??迤?函?甇Ｕ?)
+                stopSelf()
+                return START_NOT_STICKY
+            }
+        }
+        return START_STICKY
+    }
+
+    private fun setupHttpServer() {
+        val prefs = getSharedPreferences("printer_app_prefs", Context.MODE_PRIVATE)
+        val serverPort = prefs.getInt("server_port", 8080)
+
+        _httpServer = SunmiHttpServer(
+            context = applicationContext,
+            port = serverPort,
+            onPrintRequest = { title, bodyText, footer, incomingToken ->
+                handleIncomingApiPrint(title, bodyText, footer, incomingToken)
+            }
