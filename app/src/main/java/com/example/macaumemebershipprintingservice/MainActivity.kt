@@ -708,7 +708,7 @@ client.publish(topic, JSON.stringify(payload));
                         value = apiUrl,
                         onValueChange = { viewModel.updateApiUrl(it) },
                         label = { Text("會話驗證主機網址 (API URL)") },
-                        placeholder = { Text("https://example.com/api/login") },
+                        placeholder = { Text("https://macauprintpublic-2.vercel.app/api/login") },
                         modifier = Modifier
                             .fillMaxWidth()
                             .testTag("api_url_input"),
