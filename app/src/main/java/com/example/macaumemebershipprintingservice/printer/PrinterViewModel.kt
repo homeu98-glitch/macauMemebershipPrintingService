@@ -34,7 +34,7 @@ class PrinterViewModel(application: Application) : AndroidViewModel(application)
     private val _username = MutableStateFlow(prefs.getString("username", "") ?: "")
     val username = _username.asStateFlow()
 
-    private val _password = MutableStateFlow("")
+    private val _password = MutableStateFlow("1234")
     val password = _password.asStateFlow()
 
     private val _apiUrl = MutableStateFlow(prefs.getString("api_url", "https://api.example.com/login") ?: "https://api.example.com/login")
