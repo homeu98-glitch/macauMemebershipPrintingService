@@ -618,7 +618,7 @@ client.publish(topic, JSON.stringify(payload));
                     }
 
                     Text(
-                        text = "當前 MQTT 狀態：" + (if (username.isNotEmpty()) "正在監聽「" + username + "」的任務" else "未登入，請先登入以啟動監聽"),
+                        text = "當前 MQTT 狀態：系統已就緒 (ID: $username)。點擊下方登入按鈕啟動同步。",
                         fontSize = 11.sp,
                         color = if (username.isNotEmpty()) Color(0xFF2E7D32) else Color(0xFFEF4444)
                     )

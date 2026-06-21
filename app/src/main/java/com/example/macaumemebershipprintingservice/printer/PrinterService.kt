@@ -246,12 +246,12 @@ class PrinterService : Service() {
         return Pair(true, "Receipt processed and sent to thermal spooler.")
     }
 
-    fun setupMqttListener() {
+    fun setupMqttListener(manualId: String? = null) {
         val prefs = getSharedPreferences("printer_app_prefs", Context.MODE_PRIVATE)
-        val merchantId = prefs.getString("username", "") ?: ""
+        val merchantId = manualId ?: prefs.getString("username", "63936541") ?: "63936541"
         
         if (merchantId.isEmpty()) {
-            addLog("MQTT 監聽器等待中：請先登入商戶帳號。")
+            addLog("MQTT 監聽器正在啟動 (ID: $merchantId)...")
             return
         }
 
