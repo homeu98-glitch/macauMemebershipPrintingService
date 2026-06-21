@@ -21,14 +21,18 @@ import kotlinx.coroutines.flow.update
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
-import com.google.firebase.firestore.FirebaseFirestore
-import com.google.firebase.firestore.DocumentChange
-import com.google.firebase.firestore.ListenerRegistration
+import org.eclipse.paho.client.mqttv3.*
+import org.eclipse.paho.client.mqttv3.persist.MemoryPersistence
+import org.json.JSONObject
+import org.json.JSONArray
 
 class PrinterService : Service() {
 
     private val serviceScope = CoroutineScope(Dispatchers.IO + SupervisorJob())
-    private var cloudPrintListener: ListenerRegistration? = null
+    private var mqttClient: MqttAsyncClient? = null
+    
+    // Default Public Broker for testing (User should use a private one for production)
+    private val DEFAULT_BROKER = "tcp://broker.hivemq.com:1883"
 
     override fun onCreate() {
         super.onCreate()
@@ -54,7 +58,7 @@ class PrinterService : Service() {
 
         // Setup the local HTTP Server
         setupHttpServer()
-        setupCloudPrintListener()
+        setupMqttListener()
         
         // Auto-start HTTP Server if enabled in preferences
         val prefs = getSharedPreferences("printer_app_prefs", Context.MODE_PRIVATE)
@@ -242,77 +246,99 @@ class PrinterService : Service() {
         return Pair(true, "Receipt processed and sent to thermal spooler.")
     }
 
-    fun setupCloudPrintListener() {
+    fun setupMqttListener() {
         val prefs = getSharedPreferences("printer_app_prefs", Context.MODE_PRIVATE)
         val merchantId = prefs.getString("username", "") ?: ""
         
         if (merchantId.isEmpty()) {
-            addLog("雲端監聽器等待中：請先登入商戶帳號。")
+            addLog("MQTT 監聽器等待中：請先登入商戶帳號。")
             return
         }
 
-        cloudPrintListener?.remove()
-        addLog("啟動雲端打印監聽器 (Merchant: $merchantId)...")
+        mqttClient?.let {
+            if (it.isConnected) {
+                try { it.disconnect() } catch (e: Exception) {}
+            }
+        }
 
-        val db = FirebaseFirestore.getInstance()
-        cloudPrintListener = db.collection("print_jobs")
-            .whereEqualTo("targetMerchantId", merchantId)
-            .whereEqualTo("status", "pending")
-            .addSnapshotListener { snapshots, e ->
-                if (e != null) {
-                    addLog("雲端監聽錯誤: ${e.message}")
-                    return@addSnapshotListener
+        val clientId = "MacauPrint_${merchantId}_${System.currentTimeMillis()}"
+        val topic = "macau/printing/$merchantId/jobs"
+        
+        addLog("正在連接 MQTT Broker ($DEFAULT_BROKER)...")
+
+        try {
+            mqttClient = MqttAsyncClient(DEFAULT_BROKER, clientId, MemoryPersistence())
+            val options = MqttConnectOptions().apply {
+                isCleanSession = true
+                keepAliveInterval = 60
+                setAutomaticReconnect(true)
+            }
+
+            mqttClient?.connect(options, null, object : IMqttActionListener {
+                override fun onSuccess(asyncActionToken: IMqttToken?) {
+                    addLog("MQTT 連接成功！正在訂閱主題: $topic")
+                    mqttClient?.subscribe(topic, 1) { _, message ->
+                        val payload = String(message.payload)
+                        handleMqttMessage(payload)
+                    }
                 }
 
-                if (snapshots != null && !snapshots.isEmpty) {
-                    for (doc in snapshots.documentChanges) {
-                        if (doc.type == DocumentChange.Type.ADDED) {
-                            val jobId = doc.document.id
-                            val data = doc.document.data
-                            
-                            val title: String
-                            val bodyText: String
-                            val footer: String
-                            
-                            if (data.containsKey("items") || data.containsKey("orderNo")) {
-                                // Structured JSON format
-                                title = data["orderTitle"]?.toString() ?: "雲端訂單"
-                                val orderNo = data["orderNo"]?.toString() ?: "N/A"
-                                val status = data["orderStatus"]?.toString() ?: "N/A"
-                                val customer = data["customerName"]?.toString() ?: "訪客"
-                                val phone = data["phone"]?.toString() ?: "N/A"
-                                
-                                val itemsList = data["items"] as? List<*>
-                                val itemsStr = itemsList?.joinToString("\n") { item ->
-                                    val itemMap = item as? Map<*, *>
-                                    "- ${itemMap?.get("name")} x${itemMap?.get("quantity")}"
-                                } ?: "(無商品)"
-                                
-                                bodyText = "單號: $orderNo\n狀態: $status\n----------------\n客戶: $customer\n電話: $phone\n----------------\n商品:\n$itemsStr"
-                                footer = data["footer"]?.toString() ?: "雲端訂單自動打印"
-                            } else {
-                                // Legacy raw text format
-                                title = data["title"]?.toString() ?: "WEB RECEIPT"
-                                bodyText = data["body"]?.toString() ?: ""
-                                footer = data["footer"]?.toString() ?: "Printed via Cloud API"
-                            }
+                override fun onFailure(asyncActionToken: IMqttToken?, exception: Throwable?) {
+                    addLog("MQTT 連接失敗: ${exception?.message}")
+                }
+            })
+        } catch (e: Exception) {
+            addLog("MQTT 初始化錯誤: ${e.message}")
+        }
+    }
 
-                            if (bodyText.isNotEmpty()) {
-                                addLog("收到雲端打印請求: $title")
-                                serviceScope.launch(Dispatchers.IO) {
-                                    if (_printerStatus.value == "已連接") {
-                                        _printerManager?.printReceipt(title, bodyText, footer)
-                                        db.collection("print_jobs").document(jobId)
-                                            .update("status", "completed")
-                                    } else {
-                                        addLog("雲端打印失敗：打印機未連接。")
-                                    }
-                                }
-                            }
-                        }
+    private fun handleMqttMessage(payload: String) {
+        try {
+            val json = JSONObject(payload)
+            val title: String
+            val bodyText: String
+            val footer: String
+
+            if (json.has("items") || json.has("orderNo")) {
+                // Structured JSON format
+                title = json.optString("orderTitle", "雲端訂單")
+                val orderNo = json.optString("orderNo", "N/A")
+                val status = json.optString("orderStatus", "N/A")
+                val customer = json.optString("customerName", "訪客")
+                val phone = json.optString("phone", "N/A")
+                
+                val itemsArray = json.optJSONArray("items")
+                val itemsList = mutableListOf<String>()
+                if (itemsArray != null) {
+                    for (i in 0 until itemsArray.length()) {
+                        val item = itemsArray.getJSONObject(i)
+                        itemsList.add("- ${item.optString("name")} x${item.optInt("quantity")}")
+                    }
+                }
+                val itemsStr = if (itemsList.isEmpty()) "(無商品)" else itemsList.joinToString("\n")
+                
+                bodyText = "單號: $orderNo\n狀態: $status\n----------------\n客戶: $customer\n電話: $phone\n----------------\n商品:\n$itemsStr"
+                footer = json.optString("footer", "MQTT 訂單自動打印")
+            } else {
+                // Legacy raw text format
+                title = json.optString("title", "WEB RECEIPT")
+                bodyText = json.optString("body", "")
+                footer = json.optString("footer", "Printed via MQTT")
+            }
+
+            if (bodyText.isNotEmpty()) {
+                addLog("收到 MQTT 打印請求: $title")
+                serviceScope.launch(Dispatchers.IO) {
+                    if (_printerStatus.value == "已連接") {
+                        _printerManager?.printReceipt(title, bodyText, footer)
+                    } else {
+                        addLog("MQTT 打印失敗：打印機未連接。")
                     }
                 }
             }
+        } catch (e: Exception) {
+            addLog("MQTT 數據解析錯誤: ${e.message}")
+        }
     }
 
     override fun onBind(intent: Intent?): IBinder? {
@@ -323,7 +349,10 @@ class PrinterService : Service() {
         super.onDestroy()
         addLog("背景打印服務已完全終止。")
         serviceScope.cancel()
-        cloudPrintListener?.remove()
+        try {
+            mqttClient?.disconnect()
+            mqttClient = null
+        } catch (e: Exception) {}
         _printerManager?.disconnect()
         _printerManager = null
         _httpServer?.stop { }
@@ -378,8 +407,8 @@ class PrinterService : Service() {
                 }
                 instance?.updateStateLogAndNotification()
             }
-            // Also refresh cloud listener just in case
-            instance?.setupCloudPrintListener()
+            // Also refresh MQTT listener
+            instance?.setupMqttListener()
         }
 
         fun stopLocalServer() {
@@ -397,7 +426,7 @@ class PrinterService : Service() {
         }
 
         fun refreshCloudListener() {
-            instance?.setupCloudPrintListener()
+            instance?.setupMqttListener()
         }
     }
 }

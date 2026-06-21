@@ -64,7 +64,7 @@ secrets {
 
 dependencies {
     implementation(platform(libs.androidx.compose.bom))
-    implementation(platform(libs.firebase.bom))
+    // implementation(platform(libs.firebase.bom))
     implementation(libs.androidx.activity.compose)
     implementation(libs.androidx.compose.material.icons.core)
     implementation(libs.androidx.compose.material.icons.extended)
@@ -79,8 +79,9 @@ dependencies {
     implementation(libs.androidx.room.ktx)
     implementation(libs.androidx.room.runtime)
     implementation(libs.converter.moshi)
-    implementation(libs.firebase.ai)
-    implementation(libs.firebase.firestore)
+    // implementation(libs.firebase.ai)
+    // implementation(libs.firebase.firestore)
+    implementation(libs.mqtt.client)
     implementation(libs.kotlinx.coroutines.android)
     implementation(libs.kotlinx.coroutines.core)
     implementation(libs.logging.interceptor)

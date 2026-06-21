@@ -417,10 +417,10 @@ fun PrinterScreen(
             }
         }
 
-        // --- UNIFIED CLOUD PRINT & TEMPLATE SECTION ---
+        // --- UNIFIED MQTT CLOUD PRINT & TEMPLATE SECTION ---
         item {
             Text(
-                text = "雲端打印同步與 JSON 協議規範",
+                text = "MQTT 雲端打印同步與 JSON 協議規範",
                 style = MaterialTheme.typography.labelSmall,
                 letterSpacing = 1.5.sp,
                 fontWeight = FontWeight.Bold,
@@ -449,25 +449,25 @@ fun PrinterScreen(
                             modifier = Modifier
                                 .size(40.dp)
                                 .clip(RoundedCornerShape(10.dp))
-                                .background(Color(0xFFE3F2FD)),
+                                .background(Color(0xFFE0F2F1)),
                             contentAlignment = Alignment.Center
                         ) {
                             Icon(
-                                imageVector = Icons.Default.Cloud,
-                                contentDescription = "雲端打印",
-                                tint = Color(0xFF1976D2),
+                                imageVector = Icons.Default.CloudSync,
+                                contentDescription = "MQTT 雲端打印",
+                                tint = Color(0xFF00796B),
                                 modifier = Modifier.size(20.dp)
                             )
                         }
                         Column {
                             Text(
-                                text = "Firebase 雲端接件與協議規範",
+                                text = "MQTT 雲端接件與協議規範",
                                 style = MaterialTheme.typography.titleMedium,
                                 fontWeight = FontWeight.Bold,
                                 color = Color(0xFF1C1B1F)
                             )
                             Text(
-                                text = "支持從網頁端直接發送 JSON 對象進行排版打印",
+                                text = "支持無 GMS 環境下遠端發送 JSON 排版打印",
                                 style = MaterialTheme.typography.bodySmall,
                                 color = Color(0xFF49454F)
                             )
@@ -478,31 +478,32 @@ fun PrinterScreen(
 
                     // Step 1: Login
                     Text(
-                        text = "1. 如何啟動雲端同步：",
+                        text = "1. 如何啟動 MQTT 雲端同步：",
                         style = MaterialTheme.typography.bodyMedium,
                         fontWeight = FontWeight.Bold,
                         color = Color(0xFF1C1B1F)
                     )
                     Text(
-                        text = "請先於下方「憑證與會話授權」區域登入。登入成功後，系統將自動開始監聽您的雲端訂單。",
+                        text = "請先於下方「憑證與會話授權」區域登入。登入成功後，系統將自動連接 MQTT Broker 並開始監聽您的打印任務。",
                         style = MaterialTheme.typography.bodySmall,
                         color = Color(0xFF49454F)
                     )
 
                     // Step 2: Implementation
                     Text(
-                        text = "2. 網站端發送 JSON 數據示例：",
+                        text = "2. 網站端發送 JSON 數據示例 (MQTT)：",
                         style = MaterialTheme.typography.bodyMedium,
                         fontWeight = FontWeight.Bold,
                         color = Color(0xFF1C1B1F)
                     )
 
                     val merchantId = if (username.isEmpty()) "您的商戶ID" else username
-                    val firebaseCode = """
-// Firebase JS SDK 示例
-db.collection('print_jobs').add({
-  targetMerchantId: '$merchantId',
-  orderTitle: '澳門會員通 • 雲端訂單',
+                    val mqttCode = """
+// MQTT.js (網頁端) 示例
+const client = mqtt.connect('wss://broker.hivemq.com:8884/mqtt');
+const topic = 'macau/printing/$merchantId/jobs';
+const payload = {
+  orderTitle: '澳門會員通 • MQTT 訂單',
   orderNo: 'TK001092260616',
   orderStatus: '【客戶已付款】',
   customerName: '澳門用戶',
@@ -511,10 +512,9 @@ db.collection('print_jobs').add({
     { name: '表嫂酸菜魚', quantity: 1 },
     { name: '凍奶茶', quantity: 2 }
   ],
-  footer: '由網頁端雲端發送',
-  status: 'pending', // 必填：pending
-  timestamp: firebase.firestore.FieldValue.serverTimestamp()
-});
+  footer: '由網頁端 MQTT 發送'
+};
+client.publish(topic, JSON.stringify(payload));
                     """.trimIndent()
 
                     Box(
@@ -524,7 +524,7 @@ db.collection('print_jobs').add({
                             .padding(12.dp)
                     ) {
                         Text(
-                            text = firebaseCode,
+                            text = mqttCode,
                             color = Color(0xFFF4F4F5),
                             fontSize = 10.sp,
                             fontFamily = FontFamily.Monospace,
@@ -618,7 +618,7 @@ db.collection('print_jobs').add({
                     }
 
                     Text(
-                        text = "當前監聽狀態：" + (if (username.isNotEmpty()) "正在監聽「" + username + "」的訂單" else "未登入，請先登入以啟動監聽"),
+                        text = "當前 MQTT 狀態：" + (if (username.isNotEmpty()) "正在監聽「" + username + "」的任務" else "未登入，請先登入以啟動監聽"),
                         fontSize = 11.sp,
                         color = if (username.isNotEmpty()) Color(0xFF2E7D32) else Color(0xFFEF4444)
                     )
@@ -1194,8 +1194,8 @@ db.collection('print_jobs').add({
                     ) {
                         items(logMessages) { log ->
                             val colorLog = when {
-                                log.contains("Error") || log.contains("失敗") || log.contains("Blocked") || log.contains("拒絕") || log.contains("Failed") -> Color(0xFFEF4444)
-                                log.contains("Success") || log.contains("成功") -> Color(0xFF4CAF50)
+                                log.contains("Error") || log.contains("失敗") || log.contains("Blocked") || log.contains("拒絕") || log.contains("Failed") || log.contains("錯誤") -> Color(0xFFEF4444)
+                                log.contains("Success") || log.contains("成功") || log.contains("已連接") -> Color(0xFF4CAF50)
                                 else -> Color(0xFF38BDF8)
                             }
                             Text(
